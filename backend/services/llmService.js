@@ -155,16 +155,15 @@ async function classifyDocument(rawText) {
   You are an expert Document Classification AI.
   Analyze the provided document text and classify it into EXACTLY ONE of the following categories:
 
-  1. "Invoice": Select this if the document contains ANY bills, utility statements, electric bills, receipts, purchase orders, invoices, amount due, tax calculations, payment details, balance summaries, or transaction histories.
-  2. "Drivers License": Select this if the document is a state driver license, DMV identity card, permit, identity document containing license numbers, DOB, expiration dates, or driver classes.
-  3. "Passport": Select this if the document is a government travel passport booklet, containing passport numbers, MRZ codes (P<), or nationality details.
-  4. "Resume": Select this for job applications, CVs, work experience, or career profiles.
-  5. "Structured Form": Select this ONLY for general surveys, tax intake sheets (W-2), or medical intake applications. YOU MUST NOT select "Structured Form" if the document contains bills, utilities, receipts, amounts due, or driver identity cards.
+  - "Drivers License": Select this if the document is a driver license, driving permit, DMV identification card, or identity document containing license numbers, DOB, expiration dates, or driver classes.
+  - "Invoice": Select this if the document contains bills, utility statements, receipts, purchase orders, invoices, amounts due, payment summaries, or transaction histories.
+  - "Passport": Select this if the document is a government travel passport booklet containing passport numbers or MRZ codes.
+  - "Resume": Select this for job applications, CVs, or career profiles.
+  - "Structured Form": Select this for generic questionnaires, tax intake sheets (W-2), or medical intake forms.
 
   CRITICAL INSTRUCTIONS:
   - Return ONLY a valid JSON object with exact keys: "document_type" and "confidence".
-  - The value of "document_type" MUST be exactly one of: "Invoice", "Drivers License", "Passport", "Resume", or "Structured Form".
-  - Do NOT default to "Structured Form". Carefully check for financial terms (bills, totals, amounts) or identity terms (license, DOB) first.
+  - The value of "document_type" MUST be exactly one of: "Drivers License", "Invoice", "Passport", "Resume", or "Structured Form".
   ${fewShotBlock}`;
 
   try {
@@ -173,8 +172,9 @@ async function classifyDocument(rawText) {
         { role: "system", content: systemPrompt },
         { role: "user", content: `Document Text:\n${rawText.slice(0, 25000)}` }
       ],
-      model: "llama-3.1-8b-instant",
-      response_format: { type: "json_object" }
+      model: "llama-3.3-70b-versatile",
+      response_format: { type: "json_object" },
+      temperature: 0.1
     });
 
     let responseText = chatCompletion.choices[0]?.message?.content || '{}';
@@ -183,24 +183,25 @@ async function classifyDocument(rawText) {
     const result = JSON.parse(responseText);
     return {
       document_type: result.document_type || "Structured Form",
-      confidence: result.confidence || 95
+      confidence: result.confidence || 98
     };
   } catch (error) {
     console.error("LLM Classification failed, utilizing heuristics fallback:", error);
     let documentType = "Structured Form";
     const textLower = rawText.toLowerCase();
-    if (textLower.includes("invoice") || textLower.includes("bill") || textLower.includes("amount due") || textLower.includes("total due") || textLower.includes("receipt") || textLower.includes("statement") || textLower.includes("balance") || textLower.includes("tax")) {
+    if (textLower.includes("license") || textLower.includes("licence") || textLower.includes("driver") || textLower.includes("driving") || textLower.includes("dl") || textLower.includes("dmv") || textLower.includes("dob") || textLower.includes("class c") || textLower.includes("class a") || textLower.includes("identification") || textLower.includes("id card")) {
+      documentType = "Drivers License";
+    } else if (textLower.includes("invoice") || textLower.includes("bill") || textLower.includes("amount due") || textLower.includes("total due") || textLower.includes("receipt") || textLower.includes("statement") || textLower.includes("balance") || textLower.includes("tax")) {
       documentType = "Invoice";
     } else if (textLower.includes("passport") || textLower.includes("p<") || textLower.includes("nationality") || textLower.includes("issuing authority")) {
       documentType = "Passport";
-    } else if (textLower.includes("license") || textLower.includes("driver") || textLower.includes("dl") || textLower.includes("dmv") || textLower.includes("dob") || textLower.includes("class c") || textLower.includes("class a") || textLower.includes("id")) {
-      documentType = "Drivers License";
     } else if (textLower.includes("resume") || textLower.includes("education") || textLower.includes("experience")) {
       documentType = "Resume";
     }
-    return { document_type: documentType, confidence: 85 };
+    return { document_type: documentType, confidence: 90 };
   }
 }
 
 module.exports = { extractStructuredData, classifyDocument };
+
 
