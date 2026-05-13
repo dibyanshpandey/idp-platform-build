@@ -146,25 +146,25 @@ async function classifyDocument(rawText) {
   const corrections = loadClassificationCorrections();
   if (corrections.length > 0) {
     const examples = corrections.map(c => 
-      `  - If file metadata/text indicates a case like: "${c.text_sample || 'similar file'}" → Classify as "${c.corrected_type}"`
+      `  - If text indicates: "${c.text_sample || 'similar file'}" → Classify as "${c.corrected_type}"`
     ).join('\n');
-    fewShotBlock = `\n  LEARNING FROM OPERATOR MANUAL CLASSIFICATION CORRECTIONS:\n${examples}\n`;
+    fewShotBlock = `\n  LEARNING FROM OPERATOR CORRECTIONS:\n${examples}\n`;
   }
 
   const systemPrompt = `
-  You are an advanced Intelligent Document Processing (IDP) Classifier.
-  Analyze the provided raw document text and classify the document into exactly one of these categories:
-  - "Invoice" (Includes invoices, sales receipts, utility bills, transaction statements, receipts, or any multi-page document bundle where some or all pages contain invoices, sales transactions, bills, or financial lines. If there is ANY invoice or receipt page in this document, you MUST classify it as "Invoice")
-  - "Drivers License" (Identity documents, state driver licenses)
-  - "Passport" (Government travel documents, passport booklet identity pages)
-  - "Resume" (CVs, portfolios, work histories)
-  - "Structured Form" (Tax forms like W-2, applications, medical intake sheets, surveys - STRICTLY EXCLUDING any document containing invoices, utility bills, or receipts)
+  You are an expert Document Classification AI.
+  Analyze the provided document text and classify it into EXACTLY ONE of the following categories:
+
+  1. "Invoice": Select this if the document contains ANY bills, utility statements, electric bills, receipts, purchase orders, invoices, amount due, tax calculations, payment details, balance summaries, or transaction histories.
+  2. "Drivers License": Select this if the document is a state driver license, DMV identity card, permit, identity document containing license numbers, DOB, expiration dates, or driver classes.
+  3. "Passport": Select this if the document is a government travel passport booklet, containing passport numbers, MRZ codes (P<), or nationality details.
+  4. "Resume": Select this for job applications, CVs, work experience, or career profiles.
+  5. "Structured Form": Select this ONLY for general surveys, tax intake sheets (W-2), or medical intake applications. YOU MUST NOT select "Structured Form" if the document contains bills, utilities, receipts, amounts due, or driver identity cards.
 
   CRITICAL INSTRUCTIONS:
-  1. Return ONLY a valid JSON object with the keys "document_type" and "confidence".
-  2. The "document_type" must be exactly one of: "Invoice", "Drivers License", "Passport", "Resume", or "Structured Form".
-  3. "confidence" must be an integer between 0 and 100 representing your confidence level.
-  4. DO NOT classify bills, utility statements, invoices, sales receipts, or purchase transactions as "Structured Form". If there is an invoice page anywhere in the document, you MUST classify it as "Invoice".
+  - Return ONLY a valid JSON object with exact keys: "document_type" and "confidence".
+  - The value of "document_type" MUST be exactly one of: "Invoice", "Drivers License", "Passport", "Resume", or "Structured Form".
+  - Do NOT default to "Structured Form". Carefully check for financial terms (bills, totals, amounts) or identity terms (license, DOB) first.
   ${fewShotBlock}`;
 
   try {
@@ -187,20 +187,20 @@ async function classifyDocument(rawText) {
     };
   } catch (error) {
     console.error("LLM Classification failed, utilizing heuristics fallback:", error);
-    // Simple heuristic fallback
     let documentType = "Structured Form";
     const textLower = rawText.toLowerCase();
-    if (textLower.includes("invoice") || textLower.includes("bill to") || textLower.includes("amount due")) {
+    if (textLower.includes("invoice") || textLower.includes("bill") || textLower.includes("amount due") || textLower.includes("total due") || textLower.includes("receipt") || textLower.includes("statement") || textLower.includes("balance") || textLower.includes("tax")) {
       documentType = "Invoice";
-    } else if (textLower.includes("passport") || textLower.includes("p<") || textLower.includes("authority")) {
+    } else if (textLower.includes("passport") || textLower.includes("p<") || textLower.includes("nationality") || textLower.includes("issuing authority")) {
       documentType = "Passport";
-    } else if (textLower.includes("license") || textLower.includes("dl") || textLower.includes("class a")) {
+    } else if (textLower.includes("license") || textLower.includes("driver") || textLower.includes("dl") || textLower.includes("dmv") || textLower.includes("dob") || textLower.includes("class c") || textLower.includes("class a") || textLower.includes("id")) {
       documentType = "Drivers License";
     } else if (textLower.includes("resume") || textLower.includes("education") || textLower.includes("experience")) {
       documentType = "Resume";
     }
-    return { document_type: documentType, confidence: 80 };
+    return { document_type: documentType, confidence: 85 };
   }
 }
 
 module.exports = { extractStructuredData, classifyDocument };
+

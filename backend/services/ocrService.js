@@ -183,8 +183,29 @@ async function processDocument(filePath, mimetype, originalname, customSchema) {
         most_recent_job_title: "string",
         education_degree: "string"
       });
+    } else if (docTypeLower.includes('invoice')) {
+      console.log("Applying specialized INVOICE/BILL extraction schema...");
+      schemaToUse = JSON.stringify({
+        invoice_number: "string",
+        vendor_name: "string",
+        invoice_date: "string",
+        due_date: "string",
+        subtotal: "string",
+        tax_amount: "string",
+        total_amount_due: "string"
+      });
+    } else {
+      console.log("Applying specialized STRUCTURED FORM extraction schema...");
+      schemaToUse = JSON.stringify({
+        form_title: "string",
+        organization_name: "string",
+        date_of_submission: "string",
+        applicant_name: "string",
+        status: "string"
+      });
     }
   }
+
 
   // 2.7 Extract structured data using LLM with cognitive-awareness schema
   for (let page of ocrResults) {
