@@ -5,7 +5,8 @@ import SplitPaneDashboard from './components/SplitPaneDashboard';
 import DocumentQueue from './components/DocumentQueue';
 import LoginPage from './components/LoginPage';
 import AnalyticsDashboard from './components/AnalyticsDashboard';
-import { LayoutGrid, Settings, HelpCircle, Bell, Moon, Sun, LogOut, Shield, FileText, Activity } from 'lucide-react';
+import UsersPage from './components/UsersPage';
+import { LayoutGrid, Settings, HelpCircle, Bell, Moon, Sun, LogOut, Shield, FileText, Activity, Users } from 'lucide-react';
 
 function App() {
   const [documents, setDocuments] = useState([]);
@@ -91,7 +92,7 @@ function App() {
     setActiveDocumentId(null);
   };
 
-  const handleFileUpload = async (uploadedFile) => {
+  const handleFileUpload = async (uploadedFile, options = {}) => {
     const docId = Date.now().toString() + Math.random().toString(36).substring(7);
     const newDoc = {
       id: docId,
@@ -112,6 +113,10 @@ function App() {
     if (customSchema.trim() !== '') {
       formData.append('custom_schema', customSchema);
     }
+    
+    // Add dynamic LLM options
+    if (options.provider) formData.append('provider', options.provider);
+    if (options.model) formData.append('model', options.model);
 
     try {
       const response = await axios.post('http://localhost:3001/api/documents/upload', formData, {
@@ -409,6 +414,19 @@ function App() {
               <Activity className="w-4 h-4" />
               Analytics Hub
             </button>
+            {canAccessSettings && (
+              <button 
+                onClick={() => setActiveView('users')}
+                className={`h-full border-b-2 text-xs font-bold flex items-center gap-2 px-1 transition-all duration-200 ${
+                  activeView === 'users' 
+                    ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400' 
+                    : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                }`}
+              >
+                <Users className="w-4 h-4" />
+                User Management
+              </button>
+            )}
           </div>
         )}
  
@@ -440,8 +458,10 @@ function App() {
               onSelectDocument={setActiveDocumentId}
               onDeleteDocuments={handleDeleteDocuments}
             />
-          ) : (
+          ) : activeView === 'dashboard' ? (
             <AnalyticsDashboard documents={documents} />
+          ) : (
+            <UsersPage currentUser={currentUser} />
           )
         )}
       </main>
