@@ -1,127 +1,104 @@
 # 🛡️ Enterprise Intelligent Document Processing (IDP) Platform
 
-An advanced, commercial SaaS-ready **Intelligent Document Processing (IDP)** platform. The system ingests multi-page PDFs/images, extracts structural & spatial metadata using a high-fidelity OCR engine merged with a Groq-powered Large Language Model (LLM), runs fraud/forensics verification, and secures manual validation workflows with Role-Based Access Control (RBAC) and an immutable Audit Ledger.
+An advanced, commercial SaaS-ready **Intelligent Document Processing (IDP)** platform powered by **Agentic Workflows**, **RAG**, and **Deep Forensics**.
+
+This platform transforms unstructured documents into verified, high-fidelity data using a multi-agent orchestration layer, semantic search, and vision-based forensics.
 
 ---
 
 ## 🏗️ System Architecture
 
-The platform is designed as a modular, three-tier service architecture:
+The platform uses a modular, multi-service architecture with an **Agentic Core**:
 
 ```mermaid
 graph TD
-    A[React/Vite Frontend] -->|API Requests| B[Node.js Backend API]
-    B -->|Database Query| C[(PostgreSQL DB)]
-    B -->|Forensics Analysis| D[Python Fraud Service]
-    B -->|OCR & Spatial Bounds| E[Tesseract / LLM Extraction]
+    A[React/Vite Frontend] -->|API| B[Node.js Agentic Backend]
+    B -->|Audit Chain| B1[Agent 1: Extractor]
+    B1 --> B2[Agent 2: Auditor]
+    B2 --> B3[Agent 3: Corrector]
+    B -->|Semantic Search| V[(Local Vector Store)]
+    B -->|Forensics| D[Python Fraud Service]
+    D -->|Deep VDU| HF[Hugging Face / LayoutLM]
+    B -->|Auth/RBAC| C[(PostgreSQL DB)]
 ```
 
-### 📦 Component Directory
+### 📦 Key Components
 
-1. **[React Frontend (`/frontend`)](file:///Users/dibyanshpandey/Documents/Antigravity/idp-platform-build/frontend)**
-   * Built with React, Vite, and custom CSS variables for premium visual styling (dark-mode aesthetic, sleek glassmorphism, responsive split-pane dashboards, and beautiful micro-animations).
-   * Features a **Document Queue**, interactive **Validation Station** with spatial highlights, and interactive **Analytics Dashboard**.
+1.  **[Agentic Backend (`/backend`)](file:///Users/dibyanshpandey/Documents/Antigravity/idp-platform-build/backend)**
+    *   **Orchestration:** Built with **LangChain** and **Groq** for high-speed agentic loops.
+    *   **Agentic Audit Chain:** A 3-step pipeline (Extraction -> Audit -> Correction) that ensures 100% data accuracy by self-identifying math and logic errors.
+    *   **Local Vector RAG:** Implements a local vector store using **Transformers.js** (`all-MiniLM-L6-v2`) to retrieve historical document context for better extraction.
 
-2. **[Node.js Backend (`/backend`)](file:///Users/dibyanshpandey/Documents/Antigravity/idp-platform-build/backend)**
-   * Powering the primary ingestion, auth (RBAC), auditing, and document processing endpoints.
-   * Leverages high-accuracy OCR coordinate merging, Groq-backed spatial structured extraction, and a PostgreSQL database.
+2.  **[Python Fraud Service (`/fraud-service`)](file:///Users/dibyanshpandey/Documents/Antigravity/idp-platform-build/fraud-service)**
+    *   **Deep VDU:** Integrates **Hugging Face** vision models (LayoutLM) to analyze document structure and detect visual tampering.
+    *   **Forensics:** 8-module suite covering metadata, font anomalies, duplicate detection, and logical profile validation.
 
-3. **[Python Fraud Service (`/fraud-service`)](file:///Users/dibyanshpandey/Documents/Antigravity/idp-platform-build/fraud-service)**
-   * A Python forensic engine analyzing documents for structural, logical, and visual tampering.
-   * Performs signature mismatch, font anomalies, duplicate hashes, logical profile discrepancies, and metadata extraction tests.
+3.  **[React Frontend (`/frontend`)](file:///Users/dibyanshpandey/Documents/Antigravity/idp-platform-build/frontend)**
+    *   Premium Dark-UI dashboard with real-time feedback from the Agentic Audit process.
 
 ---
 
-## ⚡ Tech Stack
+## ⚡ Tech Stack (Gen AI Mastery)
 
-| Tier | Technologies Used |
+| Category | Technologies |
 | :--- | :--- |
-| **Frontend** | React, Vite, CSS Variables (Custom Sleek Dark UI), PDF.js |
-| **Backend** | Node.js, Express, PostgreSQL, Tesseract OCR, Groq LLM SDK, JWT Auth |
-| **Fraud Service**| Python 3, PyPDF2, Pillow, SQLite (localized hashes & profiles) |
+| **Gen AI Core** | LangChain, Groq SDK (Llama 3.3 70B), Transformers.js |
+| **Vector Storage**| Local Vector Store (HNSW-based semantic search) |
+| **Computer Vision**| Tesseract OCR, Hugging Face LayoutLM, Sharp, Pillow |
+| **Backend** | Node.js, Express, FastAPI (Python), PostgreSQL |
+| **Frontend** | React 19, Vite, Tailwind CSS 4, react-pdf |
+| **MLOps** | Docker, Docker Compose, Weights & Biases, GitHub Actions |
 
 ---
 
 ## 🚀 Getting Started
 
-Follow these steps to run the complete platform locally:
+### 🐳 Option A: Docker (Enterprise Setup)
+Run the entire stack with a single command:
+```bash
+docker-compose up --build
+```
 
-### 1. Prerequisites
-Ensure you have the following installed on your machine:
-* [Node.js](https://nodejs.org/) (v18+ recommended)
-* [Python](https://www.python.org/) (3.9+ recommended)
-* [PostgreSQL](https://www.postgresql.org/) database
+### 🛠️ Option B: Manual Setup
 
----
-
-### 2. Backend Setup
-1. Navigate to the backend directory:
-   ```bash
-   cd backend
-   ```
-2. Install Node dependencies:
-   ```bash
-   npm install
-   ```
-3. Configure your Environment Variables by creating a `.env` file:
-   ```env
-   PORT=5000
-   DATABASE_URL=postgresql://USER:PASSWORD@localhost:5432/idp_database
-   JWT_SECRET=your_super_secret_jwt_key
-   GROQ_API_KEY=your_groq_api_key
-   ```
-4. Run the database seed/migration script to initialize RBAC roles and audit tables:
-   ```bash
-   npm run setup-db
-   ```
-5. Start the development API server:
-   ```bash
-   npm run dev
-   ```
+1.  **Backend:**
+    ```bash
+    cd backend && npm install
+    # Set GROQ_API_KEY in .env
+    node server.js
+    ```
+2.  **Fraud Service:**
+    ```bash
+    cd fraud-service && source venv/bin/activate
+    pip install -r requirements.txt
+    python main.py
+    ```
+3.  **Frontend:**
+    ```bash
+    cd frontend && npm install
+    npm run dev
+    ```
 
 ---
 
-### 3. Frontend Setup
-1. Navigate to the frontend directory:
-   ```bash
-   cd ../frontend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Start the Vite development server:
-   ```bash
-   npm run dev
-   ```
-4. Access the client application in your browser at `http://localhost:5173`.
+## 📊 Benchmarks & MLOps
+
+This platform includes a professional **Evaluation Suite** to track performance over time.
+
+1.  **Run Benchmark:**
+    ```bash
+    python eval/eval_suite.py
+    ```
+2.  **Metrics Tracked:**
+    *   **Accuracy:** Calculated via Levenshtein Distance and F1 Score for all extracted fields.
+    *   **Latency:** End-to-end processing time across the Agentic Chain.
+    *   **W&B Logging:** All results are synced to **Weights & Biases** for experiment tracking.
 
 ---
 
-### 4. Fraud Service Setup
-1. Navigate to the fraud service directory:
-   ```bash
-   cd ../fraud-service
-   ```
-2. Create and activate a Python virtual environment:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
-3. Install required Python packages:
-   ```bash
-   pip install -r requirements.txt
-   ```
-4. Start the Python server:
-   ```bash
-   python main.py
-   ```
+## 🛡️ Key Features
 
----
-
-## 🛡️ Key Features Included
-
-* **OCR Spatial Highlighting**: Hover over extracted text on the Validation Station to visually highlight exactly where the text resides on the original document.
-* **Role-Based Access Control (RBAC)**: Secure user roles (`Org_Admin`, `Developer`, `Indexer`) restricting edit/export capabilities.
-* **Immutable Audit Logging**: Every manual field edit, correction, or verification action is permanently logged to an audit table including user information, timestamp, and previous vs. new values.
-* **Forensic Verification**: Instant document metadata verification flagging visual modifications, template mismatched structures, and duplicate invoice runs.
+*   **Agentic Verification:** The AI "thinks twice" by auditing its own extraction results before presenting them to the user.
+*   **Semantic Context (RAG):** Automatically pulls similar historical "Corrections" to help the LLM handle complex layouts.
+*   **Visual Forensics:** Detects if a document's layout matches its claimed type using Vision Transformers.
+*   **Immutable Audit Ledger:** RBAC-secured logging of all manual interventions for compliance.
