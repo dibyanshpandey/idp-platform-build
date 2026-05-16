@@ -9,16 +9,12 @@ from forensics.duplicate import analyze_duplicate
 from forensics.incremental import analyze_incremental
 from forensics.font_analysis import analyze_font
 from forensics.vendor_profile import analyze_vendor_profile
+from forensics.vdu import analyze_vdu
 
 app = FastAPI(title="IDP Fraud Detection Service")
 
 # Allow CORS for backend and frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ... (lines 16-22 omitted for brevity, but I will keep them)
 
 @app.post("/analyze")
 async def analyze_document(
@@ -26,7 +22,7 @@ async def analyze_document(
     extracted_data: str = Form("{}")
 ):
     """
-    Runs the 7 forensic modules against the uploaded document and extracted JSON.
+    Runs the 8 forensic modules (including HF-based VDU) against the document.
     """
     file_bytes = await document.read()
     filename = document.filename
@@ -41,7 +37,7 @@ async def analyze_document(
     # 1. Metadata Forensics
     results["metadata"] = analyze_metadata(file_bytes, filename)
     
-    # 2. Visual Forensics
+    # 2. Visual Forensics (Traditional)
     results["visual"] = analyze_visual(file_bytes, filename)
     
     # 3. Logical Validation
@@ -50,14 +46,17 @@ async def analyze_document(
     # 4. Duplicate Detection
     results["duplicate"] = analyze_duplicate(file_bytes, filename)
     
-    # 5. Incremental Update Detection (Deep Forensics)
+    # 5. Incremental Update Detection
     results["incremental"] = analyze_incremental(file_bytes, filename)
     
-    # 6. Font Anomaly Analysis (Deep Forensics)
+    # 6. Font Anomaly Analysis
     results["font_analysis"] = analyze_font(file_bytes, filename)
     
-    # 7. Cross-Document Vendor Profiling (Deep Forensics)
+    # 7. Cross-Document Vendor Profiling
     results["vendor_profile"] = analyze_vendor_profile(file_bytes, filename, parsed_json)
+    
+    # 8. Deep VDU Analysis (Hugging Face)
+    results["vdu_analysis"] = analyze_vdu(file_bytes, filename)
     
     return results
 

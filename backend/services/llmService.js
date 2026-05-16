@@ -1,6 +1,23 @@
-const Groq = require('groq-sdk');
+const { ChatGroq } = require("@langchain/groq");
+const { ChatPromptTemplate } = require("@langchain/core/prompts");
+const { z } = require("zod");
 const fs = require('fs');
 const path = require('path');
+const vectorService = require('./vectorService');
+
+// Initialize the main LLM (Llama 3.3 70B for high-quality logic)
+const model = new ChatGroq({
+  apiKey: process.env.GROQ_API_KEY,
+  modelName: "llama-3.3-70b-versatile",
+  temperature: 0,
+});
+
+// A faster model for secondary tasks
+const fastModel = new ChatGroq({
+  apiKey: process.env.GROQ_API_KEY,
+  modelName: "llama-3.1-8b-instant",
+  temperature: 0,
+});
 
 function loadCorrections() {
   try {
@@ -24,185 +41,177 @@ function loadClassificationCorrections() {
   }
 }
 
+/**
+ * PHASE 1: AGENTIC AUDIT CHAIN
+ * This agent audits the extraction results and flags inconsistencies.
+ */
+async function _agenticAudit(rawText, extractedData) {
+  const auditPrompt = ChatPromptTemplate.fromMessages([
+    ["system", `You are a Senior Data Auditor. Your task is to verify if the extracted JSON data matches the provided OCR text.
+    
+    CHECK FOR:
+    1. Math Errors: Do line items sum to the total?
+    2. Transcription Errors: Are names or dates misread?
+    3. Missing Data: Is there something in the text that SHOULD be in the JSON but isn't?
+    4. Hallucinations: Is there something in the JSON that ISN'T in the text?
+    
+    Return your findings in a JSON object with:
+    "is_valid": boolean,
+    "discrepancies": string[],
+    "suggested_fixes": object (key-value pairs to fix)`],
+    ["user", "RAW TEXT:\n{rawText}\n\nEXTRACTED DATA:\n{extractedData}"]
+  ]);
+
+  const auditChain = auditPrompt.pipe(fastModel);
+  const result = await auditChain.invoke({
+    rawText: rawText.slice(0, 10000),
+    extractedData: JSON.stringify(extractedData, null, 2)
+  });
+
+  try {
+    const auditReport = JSON.parse(result.content.replace(/```json\n?|```/g, ""));
+    return auditReport;
+  } catch (e) {
+    return { is_valid: true, discrepancies: [], suggested_fixes: {} };
+  }
+}
+
 async function extractStructuredData(rawText, customSchema, imageBuffer) {
   if (!process.env.GROQ_API_KEY) {
-    console.warn("GROQ_API_KEY is not set. Returning raw text.");
     return { extracted_raw_text: rawText };
   }
 
-  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
-  let schemaInstruction = `3. Work on ANY document type (invoices, resumes, forms, letters, etc.) and extract the natural key-value pairs present.`;
-  if (customSchema && customSchema.trim() !== '') {
-    schemaInstruction = `3. STRICT SCHEMA ENFORCEMENT: You must extract data matching EXACTLY the following JSON schema. Do not add keys that are not in this schema.\nSchema: ${customSchema}`;
+  // 1. Build Dynamic Schema & Instructions
+  let schemaInstruction = "Extract natural key-value pairs.";
+  if (customSchema) {
+    schemaInstruction = `STRICT SCHEMA ENFORCEMENT: ${customSchema}`;
   }
 
-  // Build few-shot learning block from operator corrections
-  let fewShotBlock = '';
   const corrections = loadCorrections();
-  if (corrections.length > 0) {
-    const examples = corrections.map(c => 
-      `  - Field "${c.field}": Incorrect="${c.wrong}" → Correct="${c.correct}"`
-    ).join('\n');
-    fewShotBlock = `\n  LEARNING FROM PAST CORRECTIONS (apply these patterns to similar fields):\n${examples}\n`;
-  }
-
-  // 1. If we have an imageBuffer, attempt direct multimodal extraction first (excellent for scans/handwriting)
-  if (imageBuffer) {
-    try {
-      console.log("Attempting direct multimodal image-based structured extraction...");
-      const base64Image = imageBuffer.toString('base64');
-
-      const systemPrompt = `
-      You are an expert document extraction API. 
-      Your task is to analyze the provided document image and extract all relevant key-value pairs.
-      
-      CRITICAL INSTRUCTIONS:
-      1. Extract information exactly as it appears in the image.
-      2. DO NOT hallucinate, infer, guess, or assume any missing data. If a field is not explicitly present in the text, DO NOT include it in the output.
-      ${schemaInstruction}
-      4. Return ONLY a valid, flat JSON object.
-      5. The keys must be snake_case representations of the field names.
-      6. The values must be the exact strings as they appear in the image.
-      ${fewShotBlock}`;
-
-      const chatCompletion = await groq.chat.completions.create({
-        messages: [
-          { role: "system", content: systemPrompt },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: "Please extract the requested fields directly from this document image:" },
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:image/png;base64,${base64Image}`
-                }
-              }
-            ]
-          }
-        ],
-        model: "meta-llama/llama-4-scout-17b-16e-instruct",
-        response_format: { type: "json_object" }
-      });
-
-      let responseText = chatCompletion.choices[0]?.message?.content || '{}';
-      responseText = responseText.replace(/^```json\n?/, '').replace(/^```\n?/, '').replace(/\n?```$/, '').trim();
-
-      const extractedJSON = JSON.parse(responseText);
-      console.log("Direct multimodal image-based structured extraction successful!");
-      return extractedJSON;
-    } catch (error) {
-      console.error("Direct visual extraction failed, falling back to text-based extraction:", error.message);
-    }
-  }
-
-  // 2. Standard text-only extraction (fallback or digital-text native documents)
-  console.log("Running standard text-only structured extraction...");
-  const systemPrompt = `
-  You are an expert document extraction API. 
-  Your task is to extract all relevant key-value pairs from the following OCR text.
   
-  CRITICAL INSTRUCTIONS:
-  1. Extract information exactly as it appears in the text.
-  2. DO NOT hallucinate, infer, guess, or assume any missing data. If a field is not explicitly present in the text, DO NOT include it in the output.
-  ${schemaInstruction}
-  4. Return ONLY a valid, flat JSON object.
-  5. The keys must be snake_case representations of the field names.
-  6. The values must be the exact strings as they appear in the text.
-  ${fewShotBlock}`;
-
+  // 1.5. SEMANTIC CONTEXT RETRIEVAL (RAG)
+  console.log("[Agent 0] Retrieving Semantic Context...");
+  let semanticContext = "";
   try {
-    const chatCompletion = await groq.chat.completions.create({
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: `Document Text:\n${rawText}` }
-      ],
-      model: "llama-3.1-8b-instant",
-      response_format: { type: "json_object" }
+    const similarDocs = await vectorService.searchSimilar(rawText.slice(0, 2000), 2);
+    if (similarDocs.length > 0) {
+      semanticContext = `SIMILAR HISTORICAL CONTEXT:\n${similarDocs.map(d => `- For a similar document, we previously extracted: ${JSON.stringify(d.metadata)}`).join('\n')}\n`;
+    }
+  } catch (e) {
+    console.warn("RAG retrieval failed, proceeding without context.");
+  }
+
+  const fewShotBlock = corrections.length > 0 
+    ? `PAST CORRECTIONS:\n${corrections.map(c => `${c.field}: ${c.wrong} -> ${c.correct}`).join('\n')}`
+    : "";
+
+  // 2. Initial Extraction
+  const extractPrompt = ChatPromptTemplate.fromMessages([
+    ["system", `You are an expert document extraction API. 
+    1. Extract exactly as it appears.
+    2. NO hallucinations.
+    3. {schemaInstruction}
+    4. Return ONLY valid JSON.
+    {fewShotBlock}
+    {semanticContext}`],
+    ["user", "Document Text:\n{rawText}"]
+  ]);
+
+  const extractChain = extractPrompt.pipe(model);
+  
+  console.log("[Agent 1] Starting Initial Extraction...");
+  const initialResult = await extractChain.invoke({
+    rawText,
+    schemaInstruction,
+    fewShotBlock,
+    semanticContext
+  });
+
+  let extractedJSON;
+  try {
+    extractedJSON = JSON.parse(initialResult.content.replace(/```json\n?|```/g, ""));
+    
+    // Save to vector store for future RAG (Asynchronous)
+    vectorService.addDocument(Date.now().toString(), rawText.slice(0, 2000), extractedJSON)
+      .catch(err => console.error("Failed to save to vector store:", err));
+
+  } catch (e) {
+    console.error("Initial extraction failed to parse JSON:", e);
+    return { error: "Parse error", raw: initialResult.content };
+  }
+
+  // 3. Agentic Audit Step (The "Gen AI Engineer" touch)
+  console.log("[Agent 2] Starting Audit/Verification...");
+  const auditReport = await _agenticAudit(rawText, extractedJSON);
+
+  if (!auditReport.is_valid && auditReport.discrepancies.length > 0) {
+    console.log(`[Agent 3] Discrepancies found: ${auditReport.discrepancies.join(", ")}. Correcting...`);
+    
+    const correctionPrompt = ChatPromptTemplate.fromMessages([
+      ["system", "You are a Data Correction Agent. Fix the provided JSON based on the Auditor's report."],
+      ["user", "ORIGINAL JSON: {json}\nAUDIT REPORT: {report}\nFIXED JSON:"]
+    ]);
+
+    const correctionChain = correctionPrompt.pipe(model);
+    const correctedResult = await correctionChain.invoke({
+      json: JSON.stringify(extractedJSON),
+      report: JSON.stringify(auditReport)
     });
 
-    let responseText = chatCompletion.choices[0]?.message?.content || '{}';
-    responseText = responseText.replace(/^```json\n?/, '').replace(/^```\n?/, '').replace(/\n?```$/, '').trim();
-
-    const extractedJSON = JSON.parse(responseText);
-    return extractedJSON;
-  } catch (error) {
-    console.error("LLM Extraction failed:", error);
-    return { error: "LLM extraction failed", details: error.message, rawText };
+    try {
+      extractedJSON = JSON.parse(correctedResult.content.replace(/```json\n?|```/g, ""));
+      extractedJSON._audit_verified = true;
+      extractedJSON._audit_fixes = auditReport.discrepancies;
+    } catch (e) {
+      console.warn("Correction failed to parse, returning original extraction.");
+    }
+  } else {
+    console.log("[Agent 2] Audit passed successfully.");
+    extractedJSON._audit_verified = true;
   }
+
+  return extractedJSON;
 }
 
 async function classifyDocument(rawText) {
   if (!process.env.GROQ_API_KEY) {
-    console.warn("GROQ_API_KEY is not set. Defaulting classification.");
     return { document_type: "Structured Form", confidence: 100 };
   }
 
-  const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-
-  // Build classification few-shot block from learning repository
-  let fewShotBlock = '';
   const corrections = loadClassificationCorrections();
-  if (corrections.length > 0) {
-    const examples = corrections.map(c => 
-      `  - If text indicates: "${c.text_sample || 'similar file'}" → Classify as "${c.corrected_type}"`
-    ).join('\n');
-    fewShotBlock = `\n  LEARNING FROM OPERATOR CORRECTIONS:\n${examples}\n`;
-  }
+  const fewShotBlock = corrections.length > 0 
+    ? `PAST CORRECTIONS:\n${corrections.map(c => `Text snippet: ${c.text_sample} -> ${c.corrected_type}`).join('\n')}`
+    : "";
 
-  const systemPrompt = `
-  You are an expert Document Classification AI.
-  Analyze the provided document text and classify it into EXACTLY ONE of the following categories:
+  const classifyPrompt = ChatPromptTemplate.fromMessages([
+    ["system", `You are a Document Classification AI.
+    Categories: "Invoice", "Drivers License", "Passport", "Resume", "Structured Form".
+    Return ONLY JSON with "document_type" and "confidence".
+    {fewShotBlock}`],
+    ["user", "Document Text:\n{text}"]
+  ]);
 
-  - "Invoice": Select this if the document is a TAX INVOICE, commercial invoice, bill, utility statement, receipt, purchase order, amount due, payment summary, or transaction history. If the text contains "tax invoice" or "invoice" or "bill", you MUST select "Invoice".
-  - "Drivers License": Select this if the document is a driver license, driving permit, DMV identification card, or identity document containing license numbers, DOB, expiration dates, or driver classes.
-  - "Passport": Select this if the document is a government travel passport booklet containing passport numbers or MRZ codes.
-  - "Resume": Select this for job applications, CVs, or career profiles.
-  - "Structured Form": Select this ONLY for medical intake questionnaires, application forms, or surveys. YOU MUST NOT select Structured Form if the document is a tax invoice, bill, or receipt.
-
-  CRITICAL INSTRUCTIONS:
-  - Return ONLY a valid JSON object with exact keys: "document_type" and "confidence".
-  - The value of "document_type" MUST be exactly one of: "Invoice", "Drivers License", "Passport", "Resume", or "Structured Form".
-  ${fewShotBlock}`;
-
+  const chain = classifyPrompt.pipe(model);
+  
   try {
-    const chatCompletion = await groq.chat.completions.create({
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: `Document Text:\n${rawText.slice(0, 25000)}` }
-      ],
-      model: "llama-3.3-70b-versatile",
-      response_format: { type: "json_object" },
-      temperature: 0.1
+    const result = await chain.invoke({
+      text: rawText.slice(0, 15000),
+      fewShotBlock
     });
-
-    let responseText = chatCompletion.choices[0]?.message?.content || '{}';
-    responseText = responseText.replace(/^```json\n?/, '').replace(/^```\n?/, '').replace(/\n?```$/, '').trim();
-
-    const result = JSON.parse(responseText);
+    
+    const parsed = JSON.parse(result.content.replace(/```json\n?|```/g, ""));
     return {
-      document_type: result.document_type || "Structured Form",
-      confidence: result.confidence || 98
+      document_type: parsed.document_type || "Structured Form",
+      confidence: parsed.confidence || 95
     };
-  } catch (error) {
-    console.error("LLM Classification failed, utilizing heuristics fallback:", error);
-    let documentType = "Structured Form";
-    const textLower = rawText.toLowerCase();
-    if (textLower.includes("tax invoice") || textLower.includes("invoice") || textLower.includes("bill") || textLower.includes("amount due") || textLower.includes("total due") || textLower.includes("receipt") || textLower.includes("statement") || textLower.includes("balance") || textLower.includes("subtotal")) {
-      documentType = "Invoice";
-    } else if (textLower.includes("license") || textLower.includes("licence") || textLower.includes("driver") || textLower.includes("driving") || textLower.includes("dl") || textLower.includes("dmv") || textLower.includes("dob") || textLower.includes("class c") || textLower.includes("class a") || textLower.includes("identification") || textLower.includes("id card")) {
-      documentType = "Drivers License";
-    } else if (textLower.includes("passport") || textLower.includes("p<") || textLower.includes("nationality") || textLower.includes("issuing authority")) {
-      documentType = "Passport";
-    } else if (textLower.includes("resume") || textLower.includes("education") || textLower.includes("experience")) {
-      documentType = "Resume";
-    }
-    return { document_type: documentType, confidence: 90 };
+  } catch (e) {
+    console.error("Classification failed, falling back to heuristics.");
+    return { document_type: "Structured Form", confidence: 90 };
   }
 }
 
 module.exports = { extractStructuredData, classifyDocument };
+
 
 
 

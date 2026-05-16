@@ -70,3 +70,6 @@ Thumbs.db
 *.njsproj
 *.sln
 *.sw?
+
+# Local Backups
+backup_initial/
