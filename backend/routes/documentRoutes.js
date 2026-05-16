@@ -47,8 +47,13 @@ router.post('/upload', authenticate, upload.single('document'), async (req, res)
 
     // 2. Process document asynchronously (fire and forget for now, or await)
     // We will await it to simplify the flow and match previous behavior
+    // 2. Process document asynchronously
     const customSchema = req.body.custom_schema;
-    const result = await processDocument(filePath, mimeType, originalName, customSchema);
+    const llmOptions = {
+      provider: req.body.provider,
+      model: req.body.model
+    };
+    const result = await processDocument(filePath, mimeType, originalName, customSchema, llmOptions);
 
     // 3. Flatten structured data
     let mergedData = {};

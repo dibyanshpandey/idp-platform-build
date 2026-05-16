@@ -25,9 +25,11 @@ if (!fs.existsSync(outputDir)) {
 }
 
 // Routes
+const authRoutes = require('./routes/auth');
 const auditRoutes = require('./routes/audit');
 const { authenticate, requireRole } = require('./middleware/auth');
 
+app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/audit', auditRoutes);
 

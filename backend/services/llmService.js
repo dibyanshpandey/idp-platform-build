@@ -1,23 +1,54 @@
 const { ChatGroq } = require("@langchain/groq");
+const { ChatOpenAI } = require("@langchain/openai");
+const { ChatGoogleGenerativeAI } = require("@langchain/google-genai");
+const { ChatAnthropic } = require("@langchain/anthropic");
 const { ChatPromptTemplate } = require("@langchain/core/prompts");
 const { z } = require("zod");
 const fs = require('fs');
 const path = require('path');
 const vectorService = require('./vectorService');
 
-// Initialize the main LLM (Llama 3.3 70B for high-quality logic)
-const model = new ChatGroq({
-  apiKey: process.env.GROQ_API_KEY,
-  modelName: "llama-3.3-70b-versatile",
-  temperature: 0,
-});
+/**
+ * Multi-Model Factory
+ * Returns a LangChain ChatModel based on provider and model name.
+ */
+function getLLM(options = {}) {
+  const provider = options.provider || "groq";
+  const modelName = options.model || "llama-3.3-70b-versatile";
+  const temperature = options.temperature ?? 0;
 
-// A faster model for secondary tasks
-const fastModel = new ChatGroq({
-  apiKey: process.env.GROQ_API_KEY,
-  modelName: "llama-3.1-8b-instant",
-  temperature: 0,
-});
+  switch (provider.toLowerCase()) {
+    case "openai":
+      return new ChatOpenAI({
+        openAIApiKey: process.env.OPENAI_API_KEY,
+        modelName: modelName || "gpt-4o",
+        temperature,
+      });
+    case "gemini":
+      return new ChatGoogleGenerativeAI({
+        apiKey: process.env.GOOGLE_API_KEY,
+        modelName: modelName || "gemini-1.5-pro",
+        temperature,
+      });
+    case "anthropic":
+      return new ChatAnthropic({
+        anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+        modelName: modelName || "claude-3-5-sonnet-latest",
+        temperature,
+      });
+    case "groq":
+    default:
+      return new ChatGroq({
+        apiKey: process.env.GROQ_API_KEY,
+        modelName: modelName || "llama-3.3-70b-versatile",
+        temperature,
+      });
+  }
+}
+
+// Global default models for internal tasks
+const defaultModel = getLLM();
+const fastModel = getLLM({ model: "llama-3.1-8b-instant" });
 
 function loadCorrections() {
   try {
@@ -76,10 +107,13 @@ async function _agenticAudit(rawText, extractedData) {
   }
 }
 
-async function extractStructuredData(rawText, customSchema, imageBuffer) {
-  if (!process.env.GROQ_API_KEY) {
+async function extractStructuredData(rawText, customSchema, imageBuffer, options = {}) {
+  if (!process.env.GROQ_API_KEY && !process.env.OPENAI_API_KEY) {
     return { extracted_raw_text: rawText };
   }
+
+  // Determine which model to use (default or custom)
+  const extractionModel = options.model ? getLLM(options) : defaultModel;
 
   // 1. Build Dynamic Schema & Instructions
   let schemaInstruction = "Extract natural key-value pairs.";
@@ -117,9 +151,9 @@ async function extractStructuredData(rawText, customSchema, imageBuffer) {
     ["user", "Document Text:\n{rawText}"]
   ]);
 
-  const extractChain = extractPrompt.pipe(model);
+  const extractChain = extractPrompt.pipe(extractionModel);
   
-  console.log("[Agent 1] Starting Initial Extraction...");
+  console.log(`[Agent 1] Starting Extraction using ${extractionModel.modelName || 'default'}...`);
   const initialResult = await extractChain.invoke({
     rawText,
     schemaInstruction,
@@ -152,7 +186,7 @@ async function extractStructuredData(rawText, customSchema, imageBuffer) {
       ["user", "ORIGINAL JSON: {json}\nAUDIT REPORT: {report}\nFIXED JSON:"]
     ]);
 
-    const correctionChain = correctionPrompt.pipe(model);
+    const correctionChain = correctionPrompt.pipe(defaultModel);
     const correctedResult = await correctionChain.invoke({
       json: JSON.stringify(extractedJSON),
       report: JSON.stringify(auditReport)
@@ -173,10 +207,12 @@ async function extractStructuredData(rawText, customSchema, imageBuffer) {
   return extractedJSON;
 }
 
-async function classifyDocument(rawText) {
-  if (!process.env.GROQ_API_KEY) {
+async function classifyDocument(rawText, options = {}) {
+  if (!process.env.GROQ_API_KEY && !process.env.OPENAI_API_KEY) {
     return { document_type: "Structured Form", confidence: 100 };
   }
+
+  const classificationModel = options.model ? getLLM(options) : defaultModel;
 
   const corrections = loadClassificationCorrections();
   const fewShotBlock = corrections.length > 0 
@@ -191,7 +227,7 @@ async function classifyDocument(rawText) {
     ["user", "Document Text:\n{text}"]
   ]);
 
-  const chain = classifyPrompt.pipe(model);
+  const chain = classifyPrompt.pipe(classificationModel);
   
   try {
     const result = await chain.invoke({
@@ -211,7 +247,3 @@ async function classifyDocument(rawText) {
 }
 
 module.exports = { extractStructuredData, classifyDocument };
-
-
-
-
